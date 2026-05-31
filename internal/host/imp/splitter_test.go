@@ -79,6 +79,66 @@ A blade fell.`
 	}
 }
 
+func TestSplitText_Volume(t *testing.T) {
+	src := `第一卷 风起
+卷一正文。
+
+卷二 云涌
+卷二正文。`
+
+	got := splitText(src, defaultChapterRegex)
+	if len(got) != 2 {
+		t.Fatalf("want 2, got %d", len(got))
+	}
+	if got[0].Title != "风起" || got[1].Title != "云涌" {
+		t.Errorf("volume titles wrong: %+v", got)
+	}
+}
+
+func TestSplitText_SpecialUnits(t *testing.T) {
+	src := `楔子
+古老的传说。
+
+第一章 启程
+踏上旅途。
+
+尾声：归乡
+多年以后。
+
+番外
+番外正文。`
+
+	got := splitText(src, defaultChapterRegex)
+	if len(got) != 4 {
+		t.Fatalf("want 4, got %d", len(got))
+	}
+	wantTitles := []string{"楔子", "启程", "归乡", "番外"}
+	for i, w := range wantTitles {
+		if got[i].Title != w {
+			t.Errorf("unit %d title: got %q want %q", i+1, got[i].Title, w)
+		}
+	}
+}
+
+func TestSplitText_EnglishPrologueEpilogue(t *testing.T) {
+	src := `Prologue
+Before it all began.
+
+Chapter 1 The Start
+Here we go.
+
+Epilogue: After
+Years later.`
+
+	got := splitText(src, defaultChapterRegex)
+	if len(got) != 3 {
+		t.Fatalf("want 3, got %d", len(got))
+	}
+	if got[2].Title != "After" {
+		t.Errorf("epilogue title: %q", got[2].Title)
+	}
+}
+
 func TestSplitText_NoTitle_FallsBack(t *testing.T) {
 	src := `第一章
 没有空格的标题，正文紧跟。

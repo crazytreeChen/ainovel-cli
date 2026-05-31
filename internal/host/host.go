@@ -522,7 +522,7 @@ func (h *Host) Snapshot() UISnapshot {
 	}
 	if snap.NovelName == "" {
 		if premise, _ := h.store.Outline.LoadPremise(); premise != "" {
-			snap.NovelName = extractNovelName(premise)
+			snap.NovelName = domain.ExtractNovelNameFromPremise(premise)
 		}
 	}
 	if meta, _ := h.store.RunMeta.Load(); meta != nil {
@@ -677,16 +677,6 @@ func deriveStatusLabel(s UISnapshot) string {
 	default:
 		return "READY"
 	}
-}
-
-func extractNovelName(premise string) string {
-	for line := range strings.SplitSeq(premise, "\n") {
-		line = strings.TrimSpace(line)
-		if rest, ok := strings.CutPrefix(line, "# "); ok {
-			return strings.TrimSpace(rest)
-		}
-	}
-	return ""
 }
 
 // ── 模型管理 ──

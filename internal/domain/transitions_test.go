@@ -43,3 +43,23 @@ func TestCanTransitionFlow(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractNovelNameFromPremise_Placeholder(t *testing.T) {
+	cases := []struct {
+		name    string
+		premise string
+		want    string
+	}{
+		{"真实书名", "# 长夜将明\n\n## 题材", "长夜将明"},
+		{"带书名号", "# 《星河彼岸》\n## 题材", "星河彼岸"},
+		{"占位-书名", "# 书名\n## 题材", ""},
+		{"占位-示例书名", "# 《示例书名》\n## 题材", ""},
+		{"占位-实际书名", "# 实际书名\n## 题材", ""},
+		{"首行非标题", "纯文本第一行\n# 书名", ""},
+	}
+	for _, c := range cases {
+		if got := ExtractNovelNameFromPremise(c.premise); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}

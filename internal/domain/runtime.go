@@ -76,11 +76,11 @@ func (p *Progress) LatestCompleted() int {
 	return max
 }
 
-// ExtractNovelNameFromPremise 只按第一条非空行提取书名。
-// 约定 premise 第一行固定为：# 书名
+// ExtractNovelNameFromPremise 从 premise 第一行 `# 书名`（可带《》包裹）提取书名。
+// 模型偶尔会照抄提示词里的占位符而非生成真名，这些值视同未提取返回空，
+// 交由上层兜底（UI 显示"未定书名"），避免界面直接显示"书名"二字。
 func ExtractNovelNameFromPremise(premise string) string {
-	lines := strings.Split(strings.ReplaceAll(premise, "\r\n", "\n"), "\n")
-	for _, raw := range lines {
+	for raw := range strings.SplitSeq(strings.ReplaceAll(premise, "\r\n", "\n"), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
@@ -88,7 +88,12 @@ func ExtractNovelNameFromPremise(premise string) string {
 		if !strings.HasPrefix(line, "# ") {
 			return ""
 		}
-		return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		name := strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "# ")), "《》\"")
+		switch name {
+		case "书名", "实际书名", "示例书名":
+			return "" // 提示词占位符，非真实书名
+		}
+		return name
 	}
 	return ""
 }

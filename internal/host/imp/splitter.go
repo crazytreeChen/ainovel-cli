@@ -7,18 +7,29 @@ import (
 	"strings"
 )
 
-// 默认章节标题正则。同时识别中文（第N章 / 第N回）和英文（Chapter N），
-// 兼容 Markdown 标题前缀（# / ##）。
+// 默认章节标题正则。覆盖常见中文（第N章/回/话/卷、卷N、序章/楔子/尾声/番外 等）
+// 与英文（Chapter N、Prologue、Epilogue）标题，兼容 Markdown 标题前缀（# / ##）。
+// 其它格式（自定义编号、剧本式等）由 Options.CustomRegex 覆盖。
 //
-// 命名分组（仅捕获标题主体，章号用非捕获组以免污染 fallback 提取）：
-//   - cn   中文标题主体（第X章 之后的文字）
-//   - en   英文标题主体（Chapter X 之后的文字）
+// 命名分组：副标题组优先于关键词组（提取时按 priority 顺序回退）：
+//   - cn    编号章节副标题（第X章/回/话/卷 之后的文字）
+//   - vol   独立卷副标题（卷X 之后的文字）
+//   - sp    特殊单元副标题（序章/楔子/尾声/番外 之后的文字）
+//   - en    英文章节副标题（Chapter X / Prologue / Epilogue 之后的文字）
+//   - spkw  特殊单元关键词本身（无副标题时作标题，如「楔子」「番外」）
+//   - enkw  英文特殊单元关键词本身（无副标题时作标题，如「Prologue」）
 var defaultChapterRegex = regexp.MustCompile(
 	`(?im)^#{0,2}\s*(?:` +
-		`第\s*(?:[零〇○Ｏ０一二三四五六七八九十百千万\d]+)\s*(?:章|回)` +
+		`第\s*(?:[零〇○Ｏ０一二三四五六七八九十百千万\d]+)\s*(?:章|回|话|卷)` +
 		`(?:[:：．\.\s]+(?P<cn>.*))?` +
 		`|` +
-		`Chapter\s+(?:\d+|[IVXLCDM]+)` +
+		`卷\s*(?:[零〇○Ｏ０一二三四五六七八九十百千万\d]+)` +
+		`(?:[:：．\.\s]+(?P<vol>.*))?` +
+		`|` +
+		`(?P<spkw>序章|序幕|楔子|引子|前言|序言|尾声|终章|后记|番外)` +
+		`(?:[:：．\.\s]+(?P<sp>.*))?` +
+		`|` +
+		`(?:Chapter\s+(?:\d+|[IVXLCDM]+)|(?P<enkw>Prologue|Epilogue))` +
 		`(?:[:：．\.\s]+(?P<en>.*))?` +
 		`)\s*$`,
 )
@@ -83,7 +94,7 @@ func splitText(text string, pattern *regexp.Regexp) []Chapter {
 // extractTitle 从匹配行提取章节标题；优先取命名捕获，否则回退章节号占位。
 func extractTitle(line string, pattern *regexp.Regexp, loc []int, fallbackNum int) string {
 	subnames := pattern.SubexpNames()
-	priority := []string{"cn", "en"}
+	priority := []string{"cn", "vol", "sp", "en", "spkw", "enkw"}
 	for _, name := range priority {
 		idx := pattern.SubexpIndex(name)
 		if idx <= 0 {

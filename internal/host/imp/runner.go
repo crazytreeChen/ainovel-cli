@@ -61,7 +61,10 @@ func Run(ctx context.Context, deps Deps, opts Options) (<-chan Event, error) {
 		}
 		total := len(chapters)
 		if total == 0 {
-			emit(StageError, 0, 0, "未识别到任何章节", fmt.Errorf("no chapters matched"))
+			emit(StageError, 0, 0,
+				"未识别到任何章节：默认支持「第N章/回/话/卷」「卷N」「序章/楔子/尾声/番外」「Chapter N / Prologue」等标题。"+
+					"若你的小说用其它格式，请加 regex 参数自定义，例如 /import 路径 regex=^第.+話$",
+				fmt.Errorf("no chapters matched"))
 			return
 		}
 		emit(StageSplitting, 0, total, fmt.Sprintf("切分完成：%d 章", total), nil)
