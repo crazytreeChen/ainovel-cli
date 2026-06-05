@@ -143,9 +143,9 @@ func (s *importState) refresh(contentW int) {
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("Esc 关闭面板"))
 	default:
-		b.WriteString(okStyle.Render("导入完成，可输入'继续创作'让 Coordinator 接力续写"))
+		b.WriteString(okStyle.Render("导入完成，正在自动接力续写"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("Esc 关闭面板"))
+		b.WriteString(dimStyle.Render("Esc 关闭面板查看进度"))
 	}
 
 	s.viewport.SetContent(b.String())

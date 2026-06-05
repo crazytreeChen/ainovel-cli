@@ -476,8 +476,14 @@ func (m Model) handleRuntimeMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		boxW, _ := reportModalSize(m.width, m.height)
 		m.importer.appendEvent(msg.ev, paddedModalContentWidth(boxW))
-		if msg.ev.Stage == imp.StageDone || msg.ev.Stage == imp.StageError {
+		if msg.ev.Stage == imp.StageError {
 			return m, nil, true
+		}
+		if msg.ev.Stage == imp.StageDone {
+			// 导入成功 → 自动接力续写：Resume 会启用 Router 并派发首条指令，
+			// 走与"重开项目恢复"完全一致的续写流程（补上同会话导入→续写的衔接）。
+			// 随后的 bootstrapMsg 处理会 enterRunning() 切到创作态。
+			return m, bootstrapRuntime(m.runtime), true
 		}
 		return m, listenImportEvent(msg.reqID, msg.ch), true
 	case simEventMsg:
