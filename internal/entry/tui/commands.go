@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -65,9 +66,10 @@ func commandRegistryInstance() commandRegistry {
 		},
 		{
 			Name:        "model",
+			Aliases:     []string{"m"},
 			Group:       "system",
 			Usage:       "/model [role]",
-			Description: "切换默认或角色模型",
+			Description: "切换默认或角色模型（按 i 新增 provider/模型）",
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				roleHint := ""
@@ -84,6 +86,38 @@ func commandRegistryInstance() commandRegistry {
 				m.modelSwitch = newModelSwitchState(m.runtime, roleHint)
 				m.textarea.Blur()
 				return m, nil
+			},
+		},
+		{
+			Name:        "provider",
+			Group:       "system",
+			Usage:       "/provider <add|fetch-models> ...",
+			Description: "管理 LLM provider：add 新增 / fetch-models 自动拉取模型列表",
+			AutoExecute: true,
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				if len(args) == 0 {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "SYSTEM",
+						Summary: "用法：/provider add <name> | /provider fetch-models [name|all]",
+						Level:   "info",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				switch args[0] {
+				case "add":
+					return runProviderAdd(m, args[1:])
+				case "fetch-models", "fetch", "fm":
+					return runProviderFetchModels(m, args[1:])
+				default:
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "SYSTEM",
+						Summary: "未知子命令：" + args[0] + "，可用：add / fetch-models",
+						Level:   "info",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
 			},
 		},
 		{
@@ -236,4 +270,60 @@ func (m Model) handleSlashCommand(cmd slashCommand) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return spec.Run(m, cmd.args)
+}
+
+func runProviderAdd(m Model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) < 1 {
+		m.applyEvent(host.Event{
+			Time: time.Now(), Category: "SYSTEM", Summary: "用法：/provider add <name>", Level: "info",
+		})
+		m.refreshEventViewport()
+		return m, nil
+	}
+	name := args[0]
+	if err := m.runtime.AddProvider(name); err != nil {
+		m.applyEvent(host.Event{
+			Time: time.Now(), Category: "ERROR", Summary: "添加 provider 失败：" + err.Error(), Level: "error",
+		})
+		m.refreshEventViewport()
+		return m, nil
+	}
+	m.applyEvent(host.Event{
+		Time:     time.Now(),
+		Category: "SYSTEM",
+		Summary:  fmt.Sprintf("已添加 provider %q，请确认 api_key/base_url 后执行 /provider fetch-models %s", name, name),
+		Level:    "info",
+	})
+	m.refreshEventViewport()
+	return m, nil
+}
+
+func runProviderFetchModels(m Model, args []string) (tea.Model, tea.Cmd) {
+	name := "all"
+	if len(args) > 0 {
+		name = args[0]
+	}
+	results, err := m.runtime.FetchProviderModels(name)
+	if err != nil {
+		// 部分成功：先展示成功结果，再提示错误
+		if len(results) > 0 {
+			for _, r := range results {
+				m.applyEvent(host.Event{
+					Time: time.Now(), Category: "SYSTEM", Summary: r, Level: "info",
+				})
+			}
+		}
+		m.applyEvent(host.Event{
+			Time: time.Now(), Category: "ERROR", Summary: "拉取模型失败：" + err.Error(), Level: "error",
+		})
+		m.refreshEventViewport()
+		return m, nil
+	}
+	for _, r := range results {
+		m.applyEvent(host.Event{
+			Time: time.Now(), Category: "SYSTEM", Summary: r, Level: "info",
+		})
+	}
+	m.refreshEventViewport()
+	return m, nil
 }

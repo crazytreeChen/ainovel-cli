@@ -128,80 +128,32 @@ func loadJSONFile(path string) (Config, error) {
 	return cfg, nil
 }
 
+// setIfNonZero 仅在 src 非零值时写入 dst。
+func setIfNonZero[T comparable](dst *T, src T) {
+	var zero T
+	if src != zero {
+		*dst = src
+	}
+}
+
 // mergeConfig 将 overlay 合并到 base 上。非零值字段覆盖，map 按 key 合并。
 func mergeConfig(base, overlay Config) Config {
-	if overlay.Provider != "" {
-		base.Provider = overlay.Provider
-	}
-	if overlay.ModelName != "" {
-		base.ModelName = overlay.ModelName
-	}
-	if overlay.ReasoningEffort != "" {
-		base.ReasoningEffort = overlay.ReasoningEffort
-	}
-	if overlay.Style != "" {
-		base.Style = overlay.Style
-	}
+	// 顶层标量字段
+	setIfNonZero(&base.Provider, overlay.Provider)
+	setIfNonZero(&base.ModelName, overlay.ModelName)
+	setIfNonZero(&base.ReasoningEffort, overlay.ReasoningEffort)
+	setIfNonZero(&base.Style, overlay.Style)
 	if overlay.ContextWindow > 0 {
 		base.ContextWindow = overlay.ContextWindow
 	}
 
-	// Providers: overlay 的 key 覆盖 base 同名 key
-	if len(overlay.Providers) > 0 {
-		if base.Providers == nil {
-			base.Providers = make(map[string]ProviderConfig)
-		}
-		for k, v := range overlay.Providers {
-			existing := base.Providers[k]
-			if v.Type != "" {
-				existing.Type = v.Type
-			}
-			if v.API != "" {
-				existing.API = v.API
-			}
-			if v.APIKey != "" {
-				existing.APIKey = v.APIKey
-			}
-			if v.BaseURL != "" {
-				existing.BaseURL = v.BaseURL
-			}
-			if len(v.Models) > 0 {
-				existing.Models = append([]string(nil), v.Models...)
-			}
-			if len(v.ExtraBody) > 0 {
-				existing.ExtraBody = cloneMap(v.ExtraBody)
-			}
-			if len(v.Extra) > 0 {
-				existing.Extra = cloneMap(v.Extra)
-			}
-			base.Providers[k] = existing
-		}
-	}
+	// Providers: overlay 的 key 覆盖 base 同名 key，逐字段合并
+	mergeProviders(&base, overlay)
 
-	// Roles: overlay 的 key 覆盖 base 同名 key
-	if len(overlay.Roles) > 0 {
-		if base.Roles == nil {
-			base.Roles = make(map[string]RoleConfig)
-		}
-		for k, v := range overlay.Roles {
-			existing := base.Roles[k]
-			if v.Provider != "" {
-				existing.Provider = v.Provider
-			}
-			if v.Model != "" {
-				existing.Model = v.Model
-			}
-			if len(v.Fallbacks) > 0 {
-				existing.Fallbacks = append([]ModelRef(nil), v.Fallbacks...)
-			}
-			if v.ReasoningEffort != "" {
-				existing.ReasoningEffort = v.ReasoningEffort
-			}
-			base.Roles[k] = existing
-		}
-	}
+	// Roles: overlay 的 key 覆盖 base 同名 key，逐字段合并
+	mergeRoles(&base, overlay)
 
-	// Budget / Notify：整块覆盖（项目级预算/告警是独立政策声明，不与全局逐字段拼接）
+	// Budget / Notify：整块覆盖（项目级是独立政策声明，不与全局逐字段拼接）
 	if overlay.Budget != (BudgetConfig{}) {
 		base.Budget = overlay.Budget
 	}
@@ -210,6 +162,51 @@ func mergeConfig(base, overlay Config) Config {
 	}
 
 	return base
+}
+
+func mergeProviders(base *Config, overlay Config) {
+	if len(overlay.Providers) == 0 {
+		return
+	}
+	if base.Providers == nil {
+		base.Providers = make(map[string]ProviderConfig)
+	}
+	for k, v := range overlay.Providers {
+		existing := base.Providers[k]
+		setIfNonZero(&existing.Type, v.Type)
+		setIfNonZero(&existing.API, v.API)
+		setIfNonZero(&existing.APIKey, v.APIKey)
+		setIfNonZero(&existing.BaseURL, v.BaseURL)
+		if len(v.Models) > 0 {
+			existing.Models = append([]string(nil), v.Models...)
+		}
+		if len(v.ExtraBody) > 0 {
+			existing.ExtraBody = cloneMap(v.ExtraBody)
+		}
+		if len(v.Extra) > 0 {
+			existing.Extra = cloneMap(v.Extra)
+		}
+		base.Providers[k] = existing
+	}
+}
+
+func mergeRoles(base *Config, overlay Config) {
+	if len(overlay.Roles) == 0 {
+		return
+	}
+	if base.Roles == nil {
+		base.Roles = make(map[string]RoleConfig)
+	}
+	for k, v := range overlay.Roles {
+		existing := base.Roles[k]
+		setIfNonZero(&existing.Provider, v.Provider)
+		setIfNonZero(&existing.Model, v.Model)
+		if len(v.Fallbacks) > 0 {
+			existing.Fallbacks = append([]ModelRef(nil), v.Fallbacks...)
+		}
+		setIfNonZero(&existing.ReasoningEffort, v.ReasoningEffort)
+		base.Roles[k] = existing
+	}
 }
 
 func cloneMap(m map[string]any) map[string]any {

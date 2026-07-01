@@ -102,12 +102,50 @@ type RoleConfig struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
-// knownRoles 支持的角色名。
-var knownRoles = map[string]bool{
-	"coordinator": true,
-	"architect":   true,
-	"writer":      true,
-	"editor":      true,
+// RoleDef 角色定义，是所有角色相关代码的唯一数据源。
+type RoleDef struct {
+	Key   string // 角色标识（用于配置/API/模型路由）
+	Label string // 人类可读标签（用于 TUI 展示）
+}
+
+// AllRoles 列出所有可用角色。default 为伪角色（指向顶层默认模型）。
+// 增删角色只需修改此 slice，knownRoles/RoleKeys/TUIRoleOptions 均自动派生。
+var AllRoles = []RoleDef{
+	{Key: "default", Label: "默认"},
+	{Key: "coordinator", Label: "Coordinator"},
+	{Key: "architect", Label: "Architect"},
+	{Key: "writer", Label: "Writer"},
+	{Key: "editor", Label: "Editor"},
+}
+
+// knownRoles 支持的角色名（从 AllRoles 派生，不含 "default"）。
+var knownRoles = func() map[string]bool {
+	m := make(map[string]bool, len(AllRoles)-1)
+	for _, r := range AllRoles {
+		if r.Key != "default" {
+			m[r.Key] = true
+		}
+	}
+	return m
+}()
+
+// RoleKeys 返回所有具体角色（不含 "default"）的 key 列表。
+// 供 host.go concreteThinkingRoles 等遍历用。
+func RoleKeys() []string {
+	keys := make([]string, 0, len(knownRoles))
+	for k := range knownRoles {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// ValidRolesHint 返回可用角色的人类可读提示串。
+func ValidRolesHint() string {
+	parts := make([]string, 0, len(knownRoles))
+	for k := range knownRoles {
+		parts = append(parts, k)
+	}
+	return strings.Join(parts, "/")
 }
 
 // Config 小说应用配置。
@@ -220,7 +258,7 @@ func (c *Config) ValidateBase() error {
 			return err
 		}
 		if !knownRoles[role] {
-			return fmt.Errorf("unknown role %q in roles config (valid: coordinator/architect/writer/editor): %w", role, errs.ErrConfig)
+			return fmt.Errorf("unknown role %q in roles config (valid: %s): %w", role, ValidRolesHint(), errs.ErrConfig)
 		}
 		if rc.Provider == "" || rc.Model == "" {
 			return fmt.Errorf("role %q must have both provider and model: %w", role, errs.ErrConfig)
@@ -382,6 +420,85 @@ func LogContextWindowChoice(role, model string, window int, source ContextWindow
 	default:
 		slog.Info("上下文窗口", attrs...)
 	}
+}
+
+// GuessProviderType 根据 provider 名称猜测 API 协议类型。
+// 已知 provider 名直接返回；未知名默认按 openai 猜测（大多数代理兼容 OpenAI 协议）。
+func GuessProviderType(name string) string {
+	if llm.IsProviderRegistered(name) {
+		return name
+	}
+	// 常见自定义代理默认按 OpenAI 协议处理
+	return "openai"
+}
+
+// EnsureProvider 确保 provider 在 Providers map 中存在。不存在时自动创建最小配置。
+// 返回 (true, nil) 表示新创建，(false, nil) 表示已存在，(false, error) 表示失败。
+func (c *Config) EnsureProvider(name string) (created bool, err error) {
+	if c.Providers == nil {
+		c.Providers = make(map[string]ProviderConfig)
+	}
+	if _, ok := c.Providers[name]; ok {
+		return false, nil
+	}
+	pc := ProviderConfig{}
+	// 非已知 provider 需显式声明 type
+	if !llm.IsProviderRegistered(name) {
+		pc.Type = "openai"
+	}
+	// ollama/bedrock 自动填默认 baseURL
+	switch name {
+	case "ollama":
+		pc.BaseURL = "http://localhost:11434/v1"
+	}
+	c.Providers[name] = pc
+	return true, nil
+}
+
+// AddCandidateModel 向指定 provider 的候选模型列表追加一个模型名。
+// 如果 provider 不存在，会先自动创建。
+func (c *Config) AddCandidateModel(provider, model string) {
+	c.EnsureProvider(provider)
+	pc := c.Providers[provider]
+	model = strings.TrimSpace(model)
+	for _, m := range pc.Models {
+		if m == model {
+			return
+		}
+	}
+	pc.Models = append(pc.Models, model)
+	c.Providers[provider] = pc
+}
+
+// SetCandidateModels 批量设置 provider 的候选模型列表，替换原有列表。
+func (c *Config) SetCandidateModels(provider string, models []string) {
+	c.EnsureProvider(provider)
+	pc := c.Providers[provider]
+	deduped := make([]string, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, m := range models {
+		m = strings.TrimSpace(m)
+		if m == "" || seen[m] {
+			continue
+		}
+		seen[m] = true
+		deduped = append(deduped, m)
+	}
+	pc.Models = deduped
+	c.Providers[provider] = pc
+}
+
+// HasProviderCredentials 检查 provider 是否已配置最小可用凭证。
+// 至少需要 api_key（除非 RequiresAPIKey 返回 false）和 base_url。
+func (c *Config) HasProviderCredentials(provider string) bool {
+	pc, ok := c.Providers[provider]
+	if !ok {
+		return false
+	}
+	if pc.BaseURL == "" {
+		return false
+	}
+	return pc.APIKey != "" || !pc.RequiresAPIKey(provider)
 }
 
 // CandidateModels 返回某个 provider 下可供切换的模型列表。

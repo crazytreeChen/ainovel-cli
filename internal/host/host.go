@@ -851,6 +851,20 @@ func (h *Host) SwitchModel(role, provider, model string) error {
 	if provider == "" || model == "" {
 		return fmt.Errorf("provider and model are required")
 	}
+	// 自动补全缺失的 provider 配置
+	created, err := h.cfg.EnsureProvider(provider)
+	if err != nil {
+		return fmt.Errorf("ensuring provider %q: %w", provider, err)
+	}
+	// 自动将模型加入候选列表
+	h.cfg.AddCandidateModel(provider, model)
+
+	// 校验 provider 凭证完整性：auto-created 或空凭证的 skeleton 拒绝切换，
+	// 避免本地“切换成功”但实际 API 调用因缺凭证而失败（误导性错误：model is not found）。
+	if created || !h.cfg.HasProviderCredentials(provider) {
+		return fmt.Errorf("provider %q 缺少 api_key 或 base_url。\n请编辑 ~/.ainovel/config.json 填入对应凭证，或使用 /provider fetch-models %s 拉取模型列表", provider, provider)
+	}
+
 	if err := h.models.Swap(role, provider, model); err != nil {
 		return err
 	}
@@ -913,9 +927,9 @@ func (h *Host) SwitchModel(role, provider, model string) error {
 	return nil
 }
 
-// concreteThinkingRoles 是可应用推理强度的具体角色（与 agents.ApplyThinking 路由一致）。
+// concreteThinkingRoles 是可应用推理强度的具体角色（从 bootstrap.AllRoles 派生）。
 // 调 default 时按各角色 ResolveReasoningEffort 逐个重新应用。
-var concreteThinkingRoles = []string{"coordinator", "architect", "writer", "editor"}
+var concreteThinkingRoles = bootstrap.RoleKeys()
 
 // CurrentThinking 返回某角色当前生效的推理强度原始串（供 /model 面板同步当前值）。
 func (h *Host) CurrentThinking(role string) string {
@@ -1035,6 +1049,66 @@ func (h *Host) SetRoleThinking(role, level string) error {
 		Time:     time.Now(),
 		Category: "SYSTEM",
 		Summary:  fmt.Sprintf("推理强度已切换：%s → %s", logRole, shown),
+		Level:    "info",
+	})
+	return nil
+}
+
+// AddProvider 运行时动态新增一个 provider（最小配置，Type 自动猜测）。
+// 仅写入内存配置，由调用方决定是否持久化（SwitchModel 会持久化）。
+func (h *Host) AddProvider(name string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("provider 名称不能为空")
+	}
+	return h.addProviderLocked(name)
+}
+
+func (h *Host) addProviderLocked(name string) error {
+	created, err := h.cfg.EnsureProvider(name)
+	if err != nil {
+		return err
+	}
+	if !created {
+		return fmt.Errorf("provider %q 已存在", name)
+	}
+	// 持久化
+	if path := bootstrap.DefaultConfigPath(); path != "" {
+		if err := bootstrap.SaveConfig(path, h.cfg); err != nil {
+			slog.Warn("保存配置失败", "module", "host", "err", err)
+		}
+	}
+	h.emitEvent(Event{
+		Time:     time.Now(),
+		Category: "SYSTEM",
+		Summary:  fmt.Sprintf("已添加 provider %q（type=%s），请编辑配置文件填入 api_key/base_url", name, bootstrap.GuessProviderType(name)),
+		Level:    "info",
+	})
+	return nil
+}
+
+// AddModel 向指定 provider 的候选模型列表追加一个模型。
+func (h *Host) AddModel(provider, model string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" || model == "" {
+		return fmt.Errorf("provider 和 model 不能为空")
+	}
+	h.cfg.AddCandidateModel(provider, model)
+	// 持久化
+	if path := bootstrap.DefaultConfigPath(); path != "" {
+		if err := bootstrap.SaveConfig(path, h.cfg); err != nil {
+			slog.Warn("保存配置失败", "module", "host", "err", err)
+		}
+	}
+	h.emitEvent(Event{
+		Time:     time.Now(),
+		Category: "SYSTEM",
+		Summary:  fmt.Sprintf("已添加模型 %q 到 provider %q", model, provider),
 		Level:    "info",
 	})
 	return nil
