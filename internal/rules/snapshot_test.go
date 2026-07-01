@@ -112,8 +112,8 @@ func TestBuildSnapshot_DegradedPropagates(t *testing.T) {
 
 func TestSystemDefaults_MatchesLegacyDefaultMD(t *testing.T) {
 	d := SystemDefaults().Structured
-	if d.ChapterWords == nil || d.ChapterWords.Min != 3000 || d.ChapterWords.Max != 6000 {
-		t.Fatalf("默认字数应为 3000-6000，得到 %+v", d.ChapterWords)
+	if d.ChapterWords == nil || d.ChapterWords.Min != 4500 || d.ChapterWords.Max != 5000 {
+		t.Fatalf("默认字数应为 4500-5000，得到 %+v", d.ChapterWords)
 	}
 	if len(d.ForbiddenPhrases) != 4 {
 		t.Fatalf("默认禁语应为 4 条，得到 %d", len(d.ForbiddenPhrases))

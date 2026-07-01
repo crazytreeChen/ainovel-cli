@@ -184,7 +184,7 @@ func SystemDefaults() Candidate {
 	return Candidate{
 		Source: "system_defaults",
 		Structured: Structured{
-			ChapterWords: &WordRange{Min: 3000, Max: 6000},
+			ChapterWords: &WordRange{Min: 4500, Max: 5000},
 			// 定长固定串的 AI 套句；checker 字面子串匹配，带变量的模式（不是X而是Y）归语义层。
 			ForbiddenPhrases: []string{"某种程度上", "值得注意的是", "不知为何", "五味杂陈"},
 			FatigueWords: map[string]int{
