@@ -19,6 +19,8 @@
 - **用户实时干预** — 写作过程中随时在输入框注入修改意见（无需暂停），系统自动评估影响范围并重写受影响章节
 - **统一 TUI 入口** — 交互界面实时观察进度，也支持携带一句需求直接启动
 - **多 LLM 支持** — OpenRouter / Anthropic / Gemini / OpenAI 等等随意切换
+- **运行时管理 Provider/模型** — `/model` 面板按 `i` 键可手动输入新 provider 或模型名，无需退出编辑配置文件
+- **自动拉取模型列表** — `/provider fetch-models` 一键从 OpenAI 兼容端点拉取模型列表，自动写入配置
 
 ## 架构
 
@@ -302,6 +304,26 @@ docker compose run --rm ainovel --headless --prompt "写一本悬疑短篇"
 `providers.<name>.api` 仅对 `type: "openai"` 或内置 `openai` 生效，用于选择 OpenAI 协议 endpoint：`chat`（默认，`/v1/chat/completions`）或 `responses`（`/v1/responses`）。Codex 类代理通常需要配置为 `responses`。
 
 `providers.<name>.extra` 为 provider 级配置，会传给底层 HTTP 客户端，适合配置 `user_agent`、`headers`、`anthropic_beta` 等代理识别字段；`providers.<name>.extra_body` 才是请求体扩展参数，两者不要混用。
+
+### 运行时管理 Provider/模型
+
+启动后可在 TUI 中动态管理 provider 和模型，无需退出编辑配置文件：
+
+**`/model` 面板**
+- 按 `i` 键手动输入新 provider 名或新模型名，自动补全到配置中
+- 支持按角色独立切换 provider/model/推理强度
+- 切换结果自动持久化到 `~/.ainovel/config.json`
+
+**`/provider` 命令**
+```
+/provider add <名称>                     # 运行时新增 provider（需后续填入 api_key/base_url）
+/provider fetch-models <名称>             # 自动拉取该 provider 的模型列表
+/provider fetch-models all                # 一次性拉取所有 OpenAI 兼容 provider 的模型列表
+```
+
+`fetch-models` 会向 `{base_url}/v1/models` 端点发起请求，解析返回的模型 ID 并写入 `providers.<name>.models`，无需手动逐个输入模型名。
+
+> **注意**：`/model` 面板切换到凭证不完整的 provider 时会提示编辑配置文件填入 `api_key` / `base_url`，避免静默失败。
 
 ## 诊断报告
 
@@ -634,6 +656,12 @@ output/{novel_name}/
 - **[agentcore](https://github.com/voocel/agentcore)** — 极简 Agent 内核（tool-calling + streaming）
 - **[litellm](https://github.com/voocel/litellm)** — 统一 LLM 接口适配
 - **[Bubble Tea](https://github.com/charmbracelet/bubbletea)** — 终端 TUI 框架
+
+## 致谢
+
+本项目基于 [voocel/ainovel-cli](https://github.com/voocel/ainovel-cli)，感谢原作者 [voocel](https://github.com/voocel) 开源了这一精妙的全自动 AI 长篇小说创作引擎。
+
+本项目在此之上新增了运行时 Provider/模型管理、自动拉取模型列表等功能，详见上文「运行时管理 Provider/模型」章节。
 
 ## License
 
