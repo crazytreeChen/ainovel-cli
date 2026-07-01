@@ -24,8 +24,6 @@ type Options struct {
 }
 
 // Run 以无界面模式运行会话内核，直接消费 Engine 事件与流式输出。
-// 未来若新增“续写已有小说”等共享启动方式，不应直接堆到这里，
-// 而应先落到 internal/entry/startup，再由 headless 入口调用。
 func Run(cfg bootstrap.Config, bundle assets.Bundle, opts Options) error {
 	stdout := opts.Stdout
 	if stdout == nil {
@@ -48,8 +46,6 @@ func Run(cfg bootstrap.Config, bundle assets.Bundle, opts Options) error {
 	cleanup := logger.SetupFile(eng.Dir(), "headless.log", false)
 	defer cleanup()
 	defer eng.Close()
-	// 运行结束 / 出错返回时落一份脱敏诊断，方便 headless 用户贴 issue。
-	// （外部 kill 的挂死不走 defer，仍需在 TUI 里手动 /diag。）
 	defer func() { _, _ = diag.Export(store.NewStore(eng.Dir())) }()
 
 	prompt := strings.TrimSpace(opts.Prompt)
@@ -64,7 +60,6 @@ func Run(cfg bootstrap.Config, bundle assets.Bundle, opts Options) error {
 			return err
 		}
 		fmt.Fprintf(stderr, "headless 启动: %s\n", eng.Dir())
-		// 启动侧确定性生成本书用户规则快照（用原始 prompt 归一化），须在 StartPrepared 前。
 		if err := eng.PrepareUserRules(plan.RawPrompt); err != nil {
 			return err
 		}
@@ -94,7 +89,27 @@ func Run(cfg bootstrap.Config, bundle assets.Bundle, opts Options) error {
 	return consume(eng, stdout, stderr, false)
 }
 
+// writeTagged 写出带标记的流内容，\x02 切换思考/正文状态
+func writeTagged(w io.Writer, s string, isThinking *bool) {
+	if s == "" {
+		return
+	}
+	if strings.Contains(s, "\x02") {
+		*isThinking = !*isThinking
+		s = strings.ReplaceAll(s, "\x02", "")
+		if *isThinking {
+			io.WriteString(w, "\n[T]\n")
+		} else {
+			io.WriteString(w, "\n[C]\n")
+		}
+	}
+	if s != "" {
+		io.WriteString(w, s)
+	}
+}
+
 func consume(eng *host.Host, stdout, stderr io.Writer, roundHasContent bool) error {
+	isThinking := false
 	for {
 		select {
 		case ev, ok := <-eng.Events():
@@ -108,9 +123,7 @@ func consume(eng *host.Host, stdout, stderr io.Writer, roundHasContent bool) err
 			}
 			if delta == host.StreamClearSentinel {
 				if roundHasContent {
-					if _, err := io.WriteString(stdout, "\n\n"); err != nil {
-						return err
-					}
+					io.WriteString(stdout, "\n[C]\n\n")
 					roundHasContent = false
 				}
 				continue
@@ -118,9 +131,7 @@ func consume(eng *host.Host, stdout, stderr io.Writer, roundHasContent bool) err
 			if delta == "" {
 				continue
 			}
-			if _, err := io.WriteString(stdout, delta); err != nil {
-				return err
-			}
+			writeTagged(stdout, delta, &isThinking)
 			roundHasContent = true
 		case _, ok := <-eng.Done():
 			if !ok {
@@ -132,6 +143,7 @@ func consume(eng *host.Host, stdout, stderr io.Writer, roundHasContent bool) err
 }
 
 func drainPending(eng *host.Host, stdout, stderr io.Writer, roundHasContent bool) error {
+	isThinking := false
 	for {
 		select {
 		case ev, ok := <-eng.Events():
@@ -144,24 +156,18 @@ func drainPending(eng *host.Host, stdout, stderr io.Writer, roundHasContent bool
 			}
 			if delta == host.StreamClearSentinel {
 				if roundHasContent {
-					if _, err := io.WriteString(stdout, "\n\n"); err != nil {
-						return err
-					}
+					io.WriteString(stdout, "\n[C]\n")
 					roundHasContent = false
 				}
 				continue
 			}
 			if delta != "" {
-				if _, err := io.WriteString(stdout, delta); err != nil {
-					return err
-				}
+				writeTagged(stdout, delta, &isThinking)
 				roundHasContent = true
 			}
 		default:
 			if roundHasContent {
-				if _, err := io.WriteString(stdout, "\n"); err != nil {
-					return err
-				}
+				io.WriteString(stdout, "\n")
 			}
 			return nil
 		}
@@ -181,6 +187,7 @@ func writeEvent(w io.Writer, ev host.Event) {
 
 func replayQueue(items []domain.RuntimeQueueItem, stdout, stderr io.Writer) (bool, error) {
 	var roundHasContent bool
+	isThinking := false
 	for _, item := range items {
 		switch item.Kind {
 		case domain.RuntimeQueueUIEvent:
@@ -191,7 +198,7 @@ func replayQueue(items []domain.RuntimeQueueItem, stdout, stderr io.Writer) (boo
 			})
 		case domain.RuntimeQueueStreamClear:
 			if roundHasContent {
-				if _, err := io.WriteString(stdout, "\n\n"); err != nil {
+				if _, err := io.WriteString(stdout, "\n[C]\n"); err != nil {
 					return roundHasContent, err
 				}
 				roundHasContent = false
@@ -201,9 +208,7 @@ func replayQueue(items []domain.RuntimeQueueItem, stdout, stderr io.Writer) (boo
 			if text == "" {
 				continue
 			}
-			if _, err := io.WriteString(stdout, text); err != nil {
-				return roundHasContent, err
-			}
+			writeTagged(stdout, text, &isThinking)
 			roundHasContent = true
 		}
 	}

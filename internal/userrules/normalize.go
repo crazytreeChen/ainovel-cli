@@ -216,7 +216,7 @@ func nonEmpty(in []string) []string {
 
 // normalizerSystemPrompt 是归一化器的系统提示词。
 // 已用 10 条真实例子（含阈值发明陷阱）验证保守提升成立（10/10）。
-const normalizerSystemPrompt = `你是 AI 小说写作系统的「规则归一化器」。你读取用户某一个来源的长期写作规则(自然语言),抽取成结构化形式。只输出一个 JSON 对象,不要任何解释文字。
+const normalizerSystemPrompt = `你是 AI小说写作系统的「规则归一化器」。你读取用户某一个来源的长期写作规则(自然语言),抽取成结构化形式。只输出一个 JSON 对象,不要任何解释文字。
 
 输出 JSON 三个字段:structured / preferences / uncertain。
 
