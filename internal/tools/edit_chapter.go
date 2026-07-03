@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/voocel/agentcore/schema"
 	agentcoretools "github.com/voocel/agentcore/tools"
@@ -14,14 +18,6 @@ import (
 )
 
 // EditChapterTool 对章节草稿做定点字符串替换，适用于打磨场景。
-// 相比 draft_chapter 整章重写，token 节省 10x+。
-//
-// 落盘契约：只改 drafts/{ch:02d}.draft.md，禁止直接改 chapters/（终稿由 commit_chapter 独占）。
-// Seed 语义：drafts 不存在但 chapters 有 → 自动把 chapters 复制到 drafts 作为起点。
-// 归属检查：章节已完成时必须在 PendingRewrites 队列中，否则拒绝。
-//
-// 本工具是 agentcore.EditTool 的薄封装，找-换逻辑（多级容错匹配、diff 输出、行尾/BOM 保留）
-// 全部复用上游实现。
 type EditChapterTool struct {
 	store *store.Store
 	edit  *agentcoretools.EditTool
@@ -36,15 +32,8 @@ func NewEditChapterTool(s *store.Store) *EditChapterTool {
 
 func (t *EditChapterTool) Name() string  { return "edit_chapter" }
 func (t *EditChapterTool) Label() string { return "编辑章节" }
-
-// ReadOnly 明确声明写工具（配合 ConcurrencySafeTool 防止被并发调度）。
 func (t *EditChapterTool) ReadOnly(_ json.RawMessage) bool { return false }
-
-// ConcurrencySafe 显式禁止并发：同章节多次 edit_chapter 并行会读-改-写竞态，
-// 即使不同章节并行也会穿插 checkpoint 顺序。统一串行最稳。
 func (t *EditChapterTool) ConcurrencySafe(_ json.RawMessage) bool { return false }
-
-// ActivityDescription 供 UI/日志展示当前工具的活动描述。
 func (t *EditChapterTool) ActivityDescription(_ json.RawMessage) string { return "编辑章节草稿" }
 
 func (t *EditChapterTool) Description() string {
@@ -61,6 +50,47 @@ func (t *EditChapterTool) Schema() map[string]any {
 		schema.Property("new_string", schema.String("替换后的新文本")).Required(),
 		schema.Property("replace_all", schema.Bool("替换所有匹配（默认 false）")),
 	)
+}
+
+// normalizeWS 将连续空白压缩为单个空格并 trim，用于容错匹配。
+func normalizeWS(s string) string {
+	re := regexp.MustCompile(`\s+`)
+	return strings.TrimSpace(re.ReplaceAllString(s, " "))
+}
+
+// fallbackReplace 在 EditTool 精确匹配失败后，用正则容错替换做兜底。
+// 将 oldStr 中所有连续空白替换为 \s+ 正则模式，在文件内容中匹配。
+// 这样即使 LLM 生成的 old_string 换行/空格与原文不一致，也能正确匹配。
+func fallbackReplace(draftPath, oldStr, newStr string, replaceAll bool) error {
+	data, err := os.ReadFile(draftPath)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	// 将 oldStr 中的连续空白替换为 \s+（可匹配任意空白序列）
+	quoted := regexp.QuoteMeta(oldStr)
+	pattern := regexp.MustCompile(`\s+`).ReplaceAllString(quoted, `\\s\+`)
+	re, err := regexp.Compile(`(?s)` + pattern)
+	if err != nil {
+		return fmt.Errorf("正则编译失败: %w", err)
+	}
+	if !re.MatchString(content) {
+		return fmt.Errorf("正则匹配未找到")
+	}
+	if replaceAll {
+		result := re.ReplaceAllString(content, newStr)
+		if result == content {
+			return fmt.Errorf("替换后无变化")
+		}
+		return os.WriteFile(draftPath, []byte(result), 0644)
+	}
+	result := re.ReplaceAllStringFunc(content, func(match string) string {
+		return newStr
+	})
+	if result == content {
+		return fmt.Errorf("替换后无变化")
+	}
+	return os.WriteFile(draftPath, []byte(result), 0644)
 }
 
 func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
@@ -83,7 +113,7 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 		return nil, fmt.Errorf("old_string 与 new_string 相同，无需修改: %w", errs.ErrToolArgs)
 	}
 
-	// 归属检查：已完成章节必须在重写队列中，避免污染终稿
+	// 归属检查：已完成章节必须在重写队列中
 	if t.store.Progress.IsChapterCompleted(a.Chapter) {
 		progress, _ := t.store.Progress.Load()
 		if progress == nil || !slices.Contains(progress.PendingRewrites, a.Chapter) {
@@ -108,9 +138,17 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 	})
 	result, err := t.edit.Execute(ctx, subArgs)
 	if err != nil {
+		// 精确匹配失败 → 尝试归一化容错替换
+		draftPath := filepath.Join(t.store.Dir(), fmt.Sprintf("drafts/%02d.draft.md", a.Chapter))
+		if fbErr := fallbackReplace(draftPath, a.OldString, a.NewString, a.ReplaceAll); fbErr == nil {
+			// 归一化替换成功，构造成功 result
+			result = []byte(`{"success":true,"fallback":"normalized"}`)
+			goto afterEdit
+		}
 		return nil, fmt.Errorf("apply edit: %w: %w", errs.ErrToolPrecondition, err)
 	}
 
+afterEdit:
 	if _, err := t.store.Checkpoints.AppendArtifact(
 		domain.ChapterScope(a.Chapter), "edit",
 		fmt.Sprintf("drafts/%02d.draft.md", a.Chapter),
@@ -118,7 +156,6 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 		return nil, fmt.Errorf("checkpoint edit: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 附加指引：让 writer 知道后续步骤，避免遗漏 check_consistency / commit_chapter
 	var passthrough map[string]any
 	if err := json.Unmarshal(result, &passthrough); err != nil {
 		return result, nil
@@ -128,10 +165,6 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 	return json.Marshal(passthrough)
 }
 
-// ensureDraft 保证 drafts/{ch}.draft.md 存在：
-//   - 已有草稿 → 直接返回
-//   - 无草稿但有终稿 → 把终稿复制到 drafts 作为修改起点（常见于打磨场景）
-//   - 都没有 → 报错，提示先用 draft_chapter 创建初稿
 func (t *EditChapterTool) ensureDraft(chapter int) error {
 	draft, err := t.store.Drafts.LoadDraft(chapter)
 	if err != nil {

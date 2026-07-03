@@ -245,22 +245,22 @@ func BuildCoordinator(
 			return reminder.NewWriterStopGuard(store)
 		},
 		ContextManagerFactory: func(model agentcore.ChatModel) agentcore.ContextManager {
-			// 每次 subagent(writer) 调用都会重建，从当前 runModel 读取最新模型名。
-			// /model 切换 writer 后下一章自动用新窗口。
-			window, _ := cfg.ResolveContextWindow(bootstrap.ModelName(model))
-			return newContextManager(contextManagerConfig{
-				Model:            model,
-				ContextWindow:    window,
-				ReserveTokens:    bootstrap.CompactReserveTokens(window),
-				KeepRecentTokens: 20000,
-				Agent:            "writer",
-				ToolMicrocompact: &corecontext.ToolResultMicrocompactConfig{
-					IdleThreshold: 5 * time.Minute,
-				},
-				ExtraStrategies: []corecontext.Strategy{
-					ctxpack.NewStoreSummaryCompact(ctxpack.StoreSummaryCompactConfig{
-						Store:            store,
-						KeepRecentTokens: 20000,
+		 // 每次 subagent(writer) 调用都会重建，从当前 runModel 读取最新模型名。
+		 // /model 切换 writer 后下一章自动用新窗口。
+		 window, _ := cfg.ResolveContextWindow(bootstrap.ModelName(model))
+		 return newContextManager(contextManagerConfig{
+		  Model:            model,
+		  ContextWindow:    window,
+		  ReserveTokens:    bootstrap.CompactReserveTokens(window),
+		  KeepRecentTokens: 10000,
+		  Agent:            "writer",
+		  ToolMicrocompact: &corecontext.ToolResultMicrocompactConfig{
+		   IdleThreshold: 3 * time.Minute,
+		  },
+		  ExtraStrategies: []corecontext.Strategy{
+		   ctxpack.NewStoreSummaryCompact(ctxpack.StoreSummaryCompactConfig{
+		    Store:            store,
+		    KeepRecentTokens: 10000,
 					}),
 				},
 				Summary: &corecontext.FullSummaryConfig{
@@ -275,13 +275,13 @@ func BuildCoordinator(
 	}
 
 	editor := subagent.Config{
-		Name:               "editor",
-		Description:        "审阅者：阅读原文，从结构和审美两个层面发现问题",
-		Model:              editorModel,
-		SystemPrompt:       bundle.Prompts.Editor,
-		Tools:              editorTools,
-		MaxTurns:           20,
-		MaxRetries:         subagentMaxRetries,
+	Name:               "editor",
+	Description:        "审阅者：阅读原文，从结构和审美两个层面发现问题",
+	Model:              editorModel,
+	SystemPrompt:       bundle.Prompts.Editor,
+	Tools:              editorTools,
+	MaxTurns:           10,
+	MaxRetries:         subagentMaxRetries,
 		ThinkingLevel:      resolvedRoleThinking(editorModel, cfg, "editor"),
 		ToolsAreIdempotent: true,
 		OnMessage:          onMsg,
@@ -293,7 +293,33 @@ func BuildCoordinator(
 			return toolName == "save_arc_summary" || toolName == "save_volume_summary"
 		},
 		StopGuardFactory: func(_, task string) agentcore.StopGuard {
-			return reminder.NewEditorStopGuard(store, task)
+		 return reminder.NewEditorStopGuard(store, task)
+		},
+		ContextManagerFactory: func(model agentcore.ChatModel) agentcore.ContextManager {
+		 window, _ := cfg.ResolveContextWindow(bootstrap.ModelName(model))
+		 return newContextManager(contextManagerConfig{
+		  Model:            model,
+		  ContextWindow:    window,
+		  ReserveTokens:    bootstrap.CompactReserveTokens(window),
+		  KeepRecentTokens: 8000,
+		  Agent:            "editor",
+		  ToolMicrocompact: &corecontext.ToolResultMicrocompactConfig{
+		   IdleThreshold: 5 * time.Minute,
+		  },
+		  ExtraStrategies: []corecontext.Strategy{
+		   ctxpack.NewStoreSummaryCompact(ctxpack.StoreSummaryCompactConfig{
+		    Store:            store,
+		    KeepRecentTokens: 8000,
+		   }),
+		  },
+		  Summary: &corecontext.FullSummaryConfig{
+		   PostSummaryHooks:    []corecontext.PostSummaryHook{restore.Hook()},
+		   SystemPrompt:        ctxpack.WriterSummarySystemPrompt,
+		   SummaryPrompt:       ctxpack.WriterSummaryPrompt,
+		   UpdateSummaryPrompt: ctxpack.WriterUpdateSummaryPrompt,
+		   TurnPrefixPrompt:    ctxpack.WriterTurnPrefixPrompt,
+		  },
+		 })
 		},
 	}
 
