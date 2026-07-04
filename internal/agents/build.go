@@ -230,13 +230,13 @@ func BuildCoordinator(
 	restore.Refresh(store)
 
 	writer := subagent.Config{
-		Name:               "writer",
-		Description:        "创作者：自主完成一章的构思、写作、自审和提交",
-		Model:              writerModel,
-		SystemPrompt:       writerPrompt,
-		Tools:              writerTools,
-		MaxTurns:           30,
-		MaxRetries:         subagentMaxRetries,
+	 Name:               "writer",
+	 Description:        "创作者：自主完成一章的构思、写作、自审和提交",
+	 Model:              writerModel,
+	 SystemPrompt:       writerPrompt,
+	 Tools:              writerTools,
+	 MaxTurns:           20,
+	 MaxRetries:         subagentMaxRetries,
 		ThinkingLevel:      resolvedRoleThinking(writerModel, cfg, "writer"),
 		ToolsAreIdempotent: true,
 		StopAfterTools:     []string{"commit_chapter"},
@@ -252,15 +252,15 @@ func BuildCoordinator(
 		  Model:            model,
 		  ContextWindow:    window,
 		  ReserveTokens:    bootstrap.CompactReserveTokens(window),
-		  KeepRecentTokens: 10000,
+		  KeepRecentTokens: 6000,
 		  Agent:            "writer",
 		  ToolMicrocompact: &corecontext.ToolResultMicrocompactConfig{
-		   IdleThreshold: 3 * time.Minute,
+		   IdleThreshold: 90 * time.Second,
 		  },
 		  ExtraStrategies: []corecontext.Strategy{
 		   ctxpack.NewStoreSummaryCompact(ctxpack.StoreSummaryCompactConfig{
 		    Store:            store,
-		    KeepRecentTokens: 10000,
+		    KeepRecentTokens: 6000,
 					}),
 				},
 				Summary: &corecontext.FullSummaryConfig{
