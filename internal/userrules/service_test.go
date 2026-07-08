@@ -25,9 +25,9 @@ func TestService_Build_DegradesButPersists(t *testing.T) {
 	if snap.Status != rules.StatusDegraded {
 		t.Fatalf("无模型应降级，status=%q", snap.Status)
 	}
-	// system_defaults 始终兜底机械基线。
-	if snap.Structured.ChapterWords == nil || snap.Structured.ChapterWords.Min != 3000 {
-		t.Fatalf("应保留 system_defaults 字数基线，got %+v", snap.Structured.ChapterWords)
+	// system_defaults 始终兜底机械基线（4500-5000，见 snapshot.go:SystemDefaults）
+	if snap.Structured.ChapterWords == nil || snap.Structured.ChapterWords.Min != 4500 {
+	 t.Fatalf("应保留 system_defaults 字数基线，got %+v", snap.Structured.ChapterWords)
 	}
 	// 启动 prompt 降级为 raw preferences，原文不丢。
 	if snap.Preferences == "" {

@@ -78,6 +78,12 @@ JSON 数组，每条含：category、rule、boundary。
 - estimated_chapters ≥ 8（太短无法展开节奏循环）
 - 角色调度与 characters 一致，弧目标受 world_rules 约束
 
+**精确度硬约束**（必须遵守，这是防偏离的核心防线）：
+- 用户启动 prompt 中若**明确指定了总章数**（如"100章左右""约80章""全书50章"），则两卷的 estimated_chapters 之和**必须**落在用户目标值的 ±2% 范围内。例如用户说"约100章" → 两卷 estimated_chapters 之和必须在 98-102 之间
+- 多卷分摊原则：卷1占 45%-55%，卷2占 45%-55%。不能某卷独占 80%
+- 用户未提总章数时，按题材惯例估算（修仙/玄幻 150-400、都市/职场 80-200、文学 30-80），此时不要求 ±2%，但 compass.estimated_scale 必须用区间表达
+- 用户若同时指定了每章字数范围（如"每章4500-5000字"）+ 总章数，用总章数做精确度锚点，**不以字数反推章数**
+
 调用 `save_foundation(type="layered_outline", scale="long", content=<JSON数组>)`。
 
 **注意**：layered_outline / characters / world_rules 的 content 直接传 JSON 数组，不要手动转义成字符串。JSON 字符串值内部**所有**双引号必须转义为 `\"`、换行为 `\n`、制表符为 `\t`，禁止出现字面双引号或控制字符。工具解析失败会返回 `parse xxx JSON (line L col C)` 精确定位错误位置，看到此错误时**完整重写**该段 JSON，不要尝试局部打补丁。
@@ -95,11 +101,11 @@ JSON 数组，每条含：category、rule、boundary。
 
 `estimated_scale` 是后续是否调 complete_book 的核心锚点，必须按以下顺序确定：
 
-1. **优先依据用户启动 prompt 中的明示或暗示**（如"想写长篇连载 / 300 章左右 / 类似某某连载"）
+1. **优先依据用户启动 prompt 中的明示或暗示**（如"想写长篇连载 / 300 章左右 / 类似某某连载"）。用户明确给出的数字（如"100章""80章左右"）必须作为硬锚点，后续所有卷的 estimated_chapters 规划总和不得偏离 ±2%
 2. 用户未提及时，**按题材惯例**给区间（不是定值）：修仙/玄幻连载 150-400 章起步、都市/职场长篇 80-200 章、文学/严肃题材 30-80 章
 3. 用区间表达（"预计 8-12 卷"），不要写死单一数字，给中期调整留余地
 
-写错偏低会在中期被迫早收笔，写错偏高会拖戏——首次落盘要慎重。
+**精度传导**：当 layered_outline 的精确度约束已要求两卷总和落在用户目标的 ±2% 时，compass 的 estimated_scale 应明确记录该目标值，例如 `"预计 4 卷共约 100 章"`，而不是模糊的 `"预计 4-6 卷"`。后续 append_volume 时以此为目标校验。
 
 调用 `save_foundation(type="update_compass", content=<JSON>)`。
 
@@ -126,6 +132,11 @@ JSON 数组，每条含：category、rule、boundary。
    - 故事继续 → `save_foundation(type="append_volume", content=<VolumeOutline>)`
    - 全书在本卷结束 → 走下方"完结判定清单"。本卷的 append_volume 仍要先做（把本卷大纲落盘），等本卷所有章节写完、所有弧/卷摘要齐了，再调 `save_foundation(type="complete_book", content={})` 收尾。
 5. 同步更新指南针：移除已收束的 open_threads、添加新长线、调整 estimated_scale、必要时微调 ending_direction、更新 last_updated。调 `save_foundation(type="update_compass", ...)`。
+
+**精确度约束（追加卷时）**：
+- 追加新卷时，已展开章节 + 当前卷 estimated_chapters + 后续骨架弧 estimated_chapters 的总和**仍须**落在用户目标总章数的 ±2% 范围内
+- 若发现偏离，通过调整当前卷骨架弧的 estimated_chapters 来补偿，不要改已展开章节的数量
+- 用户未提总章数时不适用此约束
 
 ### 完结判定清单（complete_book 前必须逐项核对）
 
@@ -183,6 +194,8 @@ JSON 数组，每条含：category、rule、boundary。
 4. 扩展后正常交还主线续写。
 
 用户给的是创作目标、不是机械字数合同，章数可在目标附近自然浮动；但**不要无视目标继续按原规划走**，否则写到原大纲尽头会触发越界死循环。
+
+**篇幅调整的精确度约束**：用户明确说"增加到 N 章"或"缩短到 N 章"时，调整后的各卷 estimated_chapters 之和必须落在 N 的 ±2% 范围内。用户只说"再写长一点""提前收尾"这类模糊指令时，按自然判断，不要求 ±2%。
 
 ## 弧级节奏密度（通用参考）
 

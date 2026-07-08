@@ -201,6 +201,42 @@ func (h *Host) PrepareUserRules(rawPrompt string) error {
 	if err != nil {
 		return fmt.Errorf("用户规则快照落盘失败，无法继续: %w", err)
 	}
+
+	// 自动种子：从 rawPrompt 中确定性提取结构化约束，叠加入快照。
+	// 这样即使 LLM 归一化漏掉了 key 字段，writer/editor 也能拿到硬约束。
+	seedStructured := rules.Structured{}
+
+	if minW, maxW := extractChapterWords(rawPrompt); minW > 0 && maxW > 0 {
+		seedStructured.ChapterWords = &rules.WordRange{Min: minW, Max: maxW}
+	}
+
+	if genre := extractGenre(rawPrompt); genre != "" {
+		seedStructured.Genre = genre
+	}
+
+	seedPref := extractPreferences(rawPrompt)
+
+	hasStructured := seedStructured.ChapterWords != nil || seedStructured.Genre != ""
+	if hasStructured || seedPref != "" {
+		seed := rules.Candidate{
+			Source:      "startup_prompt_auto",
+			Structured:  seedStructured,
+			Preferences: seedPref,
+		}
+		merged := rules.OverlaySnapshot(*snap, seed)
+		if err := h.store.UserRules.Save(&merged); err != nil {
+			slog.Warn("用户规则快照自动种子落盘失败", "module", "host", "err", err)
+			return fmt.Errorf("用户规则快照自动种子落盘失败: %w", err)
+		}
+		snap = &merged
+		slog.Info("用户规则自动种子",
+			"module", "host",
+			"chapter_words", seedStructured.ChapterWords,
+			"genre", seedStructured.Genre,
+			"preferences", seedPref,
+		)
+	}
+
 	logUserRulesSnapshot(snap)
 	return nil
 }
@@ -389,14 +425,25 @@ func (h *Host) Steer(text string) {
 
 	h.emitEvent(Event{Time: time.Now(), Category: "USER", Summary: "[用户干预] " + text, Level: "info"})
 
-	msg := interventionMsg(text)
+	// 读取进度和大纲，做偏离评估
+	progress, _ := h.store.Progress.Load()
+	layered := progress != nil && progress.Layered
+	assessment := assessSteerDeviation(text, progress, h.store.Outline, layered)
+
+	msg := buildSteerMessage(text, assessment)
+
+	// 设置 flow = steering，让 Router 知道当前有用户干预正在处理
+	if progress != nil {
+		_ = h.store.Progress.SetFlow(domain.FlowSteering)
+	}
+
 	if running {
-		if _, err := h.coordinator.Inject(msg); err != nil {
+		if _, err := h.coordinator.Inject(agentcore.UserMsg(msg)); err != nil {
 			slog.Error("steer inject 失败", "module", "host", "err", err)
 		}
 		return
 	}
-	// 停机：持久化待下次启动 + 反馈系统状态（"已保存"是 USER 事件之外的系统提示）
+	// 停机：持久化待下次启动 + 反馈系统状态
 	_ = h.store.RunMeta.SetPendingSteer(text)
 	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "干预已保存，下次启动时生效", Level: "info"})
 }
